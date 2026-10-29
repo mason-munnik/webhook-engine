@@ -121,14 +121,11 @@ func webhookTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// responds with status okay here
 	w.WriteHeader(http.StatusOK)
-	// makes response body the reqBody
 	w.Write(reqBody)
 }
 
 func main() {
-	// Step 1: Set up an HTTP server and your first route
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /webhook-test", webhookTest)
 	mux.HandleFunc("POST /subscription", createSubscription)
