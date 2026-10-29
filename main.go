@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -33,6 +34,9 @@ func readJSON(w http.ResponseWriter, r *http.Request, i any) error {
 var subscriptions = map[string]Subscription{}
 var mu sync.Mutex
 var events = map[string]Event{}
+var httpClient = &http.Client{
+	Timeout: 5 * time.Second,
+}
 
 func createSubscription(w http.ResponseWriter, r *http.Request) {
 	var sub Subscription
@@ -85,17 +89,29 @@ func sendWebhook(sub Subscription, event Event) {
 		return
 	}
 
-	resp, err := http.Post(sub.TargetURL, "application/json", bytes.NewReader(data))
-	if err != nil {
-		log.Printf("error delivering webhook to %s: %v", sub.TargetURL, err)
-		return
-	}
-	defer resp.Body.Close()
+	for i := 0; i < 3; i++ {
+		resp, err := httpClient.Post(sub.TargetURL, "application/json", bytes.NewReader(data))
+		if err != nil {
+			log.Printf("attempt %d failed to %s: %v", i+1, sub.TargetURL, err)
+			time.Sleep(time.Second)
+			continue
+		}
 
-	if resp.StatusCode == http.StatusOK {
-		log.Printf("webhook delivered to %s (status 200)", sub.TargetURL)
-	} else {
-		log.Printf("webhook to %s returned status: %d", sub.TargetURL, resp.StatusCode)
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			log.Printf("webhook delivered to %s (status %d)", sub.TargetURL, resp.StatusCode)
+			resp.Body.Close()
+			break
+		}
+
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			log.Printf("client error (%d) from %s, not retrying", resp.StatusCode, sub.TargetURL)
+			resp.Body.Close()
+			return
+		}
+
+		log.Printf("server error (%d) from %s, retrying...", resp.StatusCode, sub.TargetURL)
+		resp.Body.Close()
+		time.Sleep(time.Second)
 	}
 }
 
