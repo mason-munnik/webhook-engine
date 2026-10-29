@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log"
@@ -59,7 +60,6 @@ func createEvent(w http.ResponseWriter, r *http.Request) {
 	event.ID = uuid.NewString()
 	mu.Lock()
 	events[event.ID] = event
-	mu.Unlock()
 	var matches []Subscription
 	for _, sub := range subscriptions {
 		for _, eventType := range sub.EventTypes {
@@ -68,8 +68,35 @@ func createEvent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	mu.Unlock()
+
+	for _, sub := range matches {
+		go sendWebhook(sub, event)
+	}
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(event)
+}
+
+func sendWebhook(sub Subscription, event Event) {
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("error marshaling event: %v", err)
+		return
+	}
+
+	resp, err := http.Post(sub.TargetURL, "application/json", bytes.NewReader(data))
+	if err != nil {
+		log.Printf("error delivering webhook to %s: %v", sub.TargetURL, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		log.Printf("webhook delivered to %s (status 200)", sub.TargetURL)
+	} else {
+		log.Printf("webhook to %s returned status: %d", sub.TargetURL, resp.StatusCode)
+	}
 }
 
 func webhookTest(w http.ResponseWriter, r *http.Request) {
